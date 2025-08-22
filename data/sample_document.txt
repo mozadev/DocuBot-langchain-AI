@@ -1,0 +1,44 @@
+DOCUBOT AI - DOCUMENTO DE EJEMPLO
+
+Este es un documento de ejemplo para probar el sistema DocuBot AI.
+
+INFORMACIÓN SOBRE LA EMPRESA:
+- Nombre: DocuBot AI Solutions
+- Fundación: 2024
+- Especialidad: Sistemas de IA para análisis de documentos
+- Tecnologías: Python, LangChain, LanceDB, OpenAI
+
+SERVICIOS OFRECIDOS:
+1. Procesamiento automático de documentos
+2. Análisis inteligente de contenido
+3. Chatbot especializado en documentos
+4. Base de datos vectorial para búsquedas semánticas
+
+TECNOLOGÍAS UTILIZADAS:
+- Python 3.9+: Lenguaje de programación principal
+- LangChain: Framework para aplicaciones de IA
+- LanceDB: Base de datos vectorial de alto rendimiento
+- OpenAI API: Modelos de lenguaje avanzados
+- Streamlit: Interfaz web moderna y responsiva
+
+CARACTERÍSTICAS DEL SISTEMA:
+- Procesamiento de PDF y DOCX
+- Embeddings vectoriales para búsqueda semántica
+- Chat inteligente con memoria de conversación
+- Interfaz web intuitiva
+- Logging y monitoreo empresarial
+- Configuración flexible y escalable
+
+BENEFICIOS:
+- Ahorro de tiempo en análisis de documentos
+- Búsqueda semántica precisa
+- Interfaz fácil de usar
+- Escalabilidad empresarial
+- Integración con APIs existentes
+
+CONTACTO:
+- Email: info@docubot-ai.com
+- Sitio web: www.docubot-ai.com
+- Teléfono: +1-555-0123
+
+Este documento sirve como ejemplo para demostrar las capacidades del sistema DocuBot AI en el procesamiento y análisis de documentos empresariales.
