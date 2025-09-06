@@ -1,49 +1,46 @@
+
 """
-Configuración principal del proyecto DocuBot AI.
-Sigue las mejores prácticas de configuración empresarial.
+Configuración principal del proyecto DocuBot AI (Pydantic v2 + pydantic-settings).
 """
 
 import os
-from typing import Optional
-from pydantic_settings import BaseSettings
 from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 
-# Cargar variables de entorno
+# Cargar variables de entorno desde .env (si existe)
 load_dotenv()
 
 class Settings(BaseSettings):
-    """
-    Configuración centralizada del proyecto.
-    Utiliza Pydantic para validación automática de tipos.
-    """
-    
-    # Configuración de OpenAI
-    openai_api_key: str = Field(..., env="OPENAI_API_KEY")
-    openai_model: str = Field(default="gpt-3.5-turbo", env="OPENAI_MODEL")
-    openai_temperature: float = Field(default=0.7, env="OPENAI_TEMPERATURE")
-    
-    # Configuración de LanceDB
-    lancedb_path: str = Field(default="./data/vector_db", env="LANCE_DB_PATH")
-    
-    # Configuración de la aplicación
-    app_name: str = Field(default="DocuBot AI", env="APP_NAME")
-    debug: bool = Field(default=False, env="DEBUG")
-    
-    # Configuración de embeddings
-    embedding_model: str = Field(default="text-embedding-ada-002", env="EMBEDDING_MODEL")
-    chunk_size: int = Field(default=1000, env="CHUNK_SIZE")
-    chunk_overlap: int = Field(default=200, env="CHUNK_OVERLAP")
-    
-    # Configuración de logging
-    log_level: str = Field(default="INFO", env="LOG_LEVEL")
-    log_file: str = Field(default="./logs/app.log", env="LOG_FILE")
-    
-    model_config = {
-        "env_file": ".env",
-        "case_sensitive": False,
-        "extra": "ignore"  # Ignorar campos extra
-    }
+    # Pydantic Settings v2: configuración del modelo/entorno
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",         # ignora claves desconocidas en .env
+        case_sensitive=False    # variables de entorno no sensibles a mayúsc/minúsc
+    )
+
+    # --- OpenAI ---
+    openai_api_key: str = Field(..., alias="OPENAI_API_KEY")
+    openai_model: str = Field("gpt-4o-mini", alias="OPENAI_MODEL")
+    openai_temperature: float = Field(0.2, alias="OPENAI_TEMPERATURE")
+
+    # --- LanceDB ---
+    lancedb_path: str = Field("./data/vector_db", alias="LANCE_DB_PATH")
+    lancedb_table: str = Field("documents", alias="LANCE_DB_TABLE")
+
+    # --- App ---
+    app_name: str = Field("DocuBot AI", alias="APP_NAME")
+    debug: bool = Field(False, alias="DEBUG")
+
+    # --- Embeddings / chunking ---
+    embedding_model: str = Field("text-embedding-3-small", alias="EMBEDDING_MODEL")
+    chunk_size: int = Field(1000, alias="CHUNK_SIZE")
+    chunk_overlap: int = Field(200, alias="CHUNK_OVERLAP")
+
+    # --- Logging ---
+    log_level: str = Field("INFO", alias="LOG_LEVEL")
+    log_file: str = Field("./logs/app.log", alias="LOG_FILE")
+
 
 # Instancia global de configuración
 settings = Settings()
