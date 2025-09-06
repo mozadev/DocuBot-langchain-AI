@@ -1,35 +1,42 @@
-# Core AI and ML libraries
-langchain>=0.1.0
-langchain-openai>=0.0.5
-langchain-community>=0.0.10
-openai>=1.10.0,<2.0.0
+# --- Core LangChain (API moderna, Pydantic v2) ---
+langchain==0.3.*            # núcleo moderno
+langchain-community==0.3.*  # integraciones
+langchain-openai==0.3.*     # OpenAI para LangChain
+pydantic>=2.6,<3
 
-# Vector database
-lancedb>=0.4.0
+# --- OpenAI sdk ---
+openai>=1.40,<2
 
-# Web interface
-streamlit>=1.28.0
+# --- Vector DB ---
+lancedb>=0.7
+tantivy>=0.22                # (opcional pero recomendado por LanceDB)  :contentReference[oaicite:4]{index=4}
 
-# Data processing
-pandas>=2.0.0
-numpy>=1.24.0
-pydantic>=2.0.0
+# --- Web UI ---
+streamlit>=1.32
 
-# Document processing
+# --- Data utils ---
+pandas>=2.1
+numpy>=1.26
+tiktoken>=0.7
+
+# --- Docs ---
 python-docx>=1.1.0
-PyPDF2>=3.0.0
-pypdf>=3.17.0
+pypdf>=4
+PyPDF2>=3
 
-# Utilities
+# --- Utils ---
 python-dotenv>=1.0.0
-requests>=2.31.0
-tiktoken>=0.5.2,<0.6.0
+requests>=2.31
 
-# Testing
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
+# --- Dev ---
+black>=24.3.0
+flake8>=7.0.0
+mypy>=1.10.0
+pytest>=8
+pytest-asyncio>=0.23
 
-# Development
-black>=23.11.0
-flake8>=6.1.0
-mypy>=1.7.0
+
+
+
+# --- Parche temporal si sigues con Python 3.9 + LibreSSL (quita esto al migrar a 3.11+) ---
+# urllib3<2
