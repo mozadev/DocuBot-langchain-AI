@@ -1,213 +1,143 @@
-"""
-Gestor de base de datos vectorial usando LanceDB.
-Implementa almacenamiento y recuperación de embeddings de documentos.
-"""
+# src/services/vector_store.py
 
-import os
-from typing import List, Dict, Any, Optional, Tuple
+from __future__ import annotations
+
+from typing import List, Optional, Sequence
+from dataclasses import dataclass
+
+from langchain_core.documents import Document  # Documento estándar LCEL
+from langchain_openai import OpenAIEmbeddings  # Embeddings OpenAI modernos
+from langchain_community.vectorstores import LanceDB  # VectorStore LanceDB
 import lancedb
-import numpy as np
-from langchain.schema import Document as LangChainDocument
-from langchain_openai import OpenAIEmbeddings
 
-from src.core.logger import logger, log_function_call
 from config.settings import settings
+from src.core.logger import logger
 
-class VectorStore:
+
+@dataclass
+class SearchResult:
+    """Contenedor tipado con documento y score de relevancia."""
+    doc: Document
+    score: float
+
+
+class VectorStoreManager:
     """
-    Gestor de base de datos vectorial usando LanceDB.
-    Maneja el almacenamiento y recuperación de embeddings de documentos.
+    Capa de acceso al VectorStore (LanceDB) con una interfaz simple.
+    - Conecta/crea tabla si falta.
+    - Indexa y consulta documentos.
+    - Expone retriever estándar para LangChain.
+    - Incluye utilidades para la UI (conteo y limpieza).
     """
-    
-    def __init__(self):
-        """Inicializa el gestor de base de datos vectorial."""
-        self.db_path = settings.lancedb_path
-        self.table_name = "documents"
-        
-        # Conectar a LanceDB
-        self.db = lancedb.connect(self.db_path)
-        
-        # Inicializar embeddings
-        self.embeddings = OpenAIEmbeddings(
+
+    def __init__(self) -> None:
+        # Embeddings OpenAI (toma API key desde settings/env)
+        self._emb = OpenAIEmbeddings(
             model=settings.embedding_model,
-            openai_api_key=settings.openai_api_key
+            api_key=getattr(settings, "openai_api_key", None),
         )
-        
-        # Crear tabla si no existe
-        self._create_table_if_not_exists()
-        
-        logger.info("VectorStore inicializado")
-    
-    @log_function_call
-    def _create_table_if_not_exists(self):
-        """Crea la tabla de documentos si no existe."""
+
+        # Conexión física a LanceDB (directorio en disco)
+        self._db = lancedb.connect(settings.lancedb_path)
+
+        # Nombre de la tabla (permite múltiples colecciones)
+        self._table_name = getattr(settings, "lancedb_table", "documents")
+
+        # Instancia del VectorStore (lazy si la tabla aún no existe)
+        self._vs: Optional[LanceDB] = None
+
+        # Si la tabla existe, inicializa el VectorStore de una vez
         try:
-            if self.table_name not in self.db.table_names():
-                # Esquema de la tabla
-                schema = {
-                    "id": "string",
-                    "content": "string",
-                    "embedding": "float32[1536]",  # Dimensiones de OpenAI embeddings
-                    "metadata": "string",  # JSON string
-                    "source": "string",
-                    "filename": "string",
-                    "chunk_index": "int32"
-                }
-                
-                # Crear tabla vacía
-                self.db.create_table(self.table_name, schema=schema)
-                logger.info(f"Tabla {self.table_name} creada")
-            else:
-                logger.info(f"Tabla {self.table_name} ya existe")
-                
-        except Exception as e:
-            logger.error(f"Error creando tabla: {str(e)}")
-            raise
-    
-    @log_function_call
-    def add_documents(self, documents: List[LangChainDocument]) -> None:
+            self._db.open_table(self._table_name)
+            self._vs = self._init_vectorstore()
+            logger.info(f"LanceDB: tabla '{self._table_name}' abierta e inicializada.")
+        except Exception:
+            logger.info(
+                f"LanceDB: la tabla '{self._table_name}' no existe aún; "
+                f"se creará automáticamente al indexar."
+            )
+
+    # ---- helpers internos ----
+
+    def _init_vectorstore(self) -> LanceDB:
         """
-        Agrega documentos a la base de datos vectorial.
-        
-        Args:
-            documents: Lista de documentos LangChain a agregar
+        Crea el VectorStore apuntando a la conexión actual.
+        Incluye fallback por diferencias de firma entre versiones.
         """
         try:
-            if not documents:
-                logger.warning("No hay documentos para agregar")
-                return
-            
-            # Preparar datos para inserción
-            data_to_insert = []
-            
-            for i, doc in enumerate(documents):
-                # Generar embedding
-                embedding = self.embeddings.embed_query(doc.page_content)
-                
-                # Preparar registro
-                record = {
-                    "id": f"{doc.metadata.get('filename', 'unknown')}_{i}",
-                    "content": doc.page_content,
-                    "embedding": embedding,
-                    "metadata": str(doc.metadata),  # Convertir a string
-                    "source": doc.metadata.get('source', ''),
-                    "filename": doc.metadata.get('filename', ''),
-                    "chunk_index": i
-                }
-                
-                data_to_insert.append(record)
-            
-            # Insertar en la tabla
-            table = self.db.open_table(self.table_name)
-            table.add(data_to_insert)
-            
-            logger.info(f"Agregados {len(documents)} documentos a la base de datos")
-            
-        except Exception as e:
-            logger.error(f"Error agregando documentos: {str(e)}")
-            raise
-    
-    @log_function_call
-    def similarity_search(self, query: str, k: int = 5) -> List[Tuple[LangChainDocument, float]]:
+            # Firmas nuevas suelen aceptar table_name
+            return LanceDB(connection=self._db, embedding=self._emb, table_name=self._table_name)
+        except TypeError:
+            # Fallback para firmas antiguas
+            logger.warning(
+                "VectorStore LanceDB inicializado sin 'table_name' (firma antigua). "
+                "Se usará la tabla por defecto del vectorstore."
+            )
+            return LanceDB(connection=self._db, embedding=self._emb)
+
+    def _ensure_vs(self) -> None:
+        """Crea la tabla/VectorStore si aún no existe (lazy init)."""
+        if self._vs is None:
+            self._vs = self._init_vectorstore()
+            logger.info("VectorStore LanceDB inicializado (lazy).")
+
+    # ---- API pública usada por tu app ----
+
+    def add_documents(self, docs: Sequence[Document]) -> int:
         """
-        Realiza búsqueda por similitud en la base de datos.
-        
-        Args:
-            query: Consulta de búsqueda
-            k: Número de resultados a retornar
-            
-        Returns:
-            Lista de tuplas (documento, score)
+        Indexa documentos ya 'chunked'.
+        Devuelve cuántos documentos se añadieron.
         """
-        try:
-            # Generar embedding de la consulta
-            query_embedding = self.embeddings.embed_query(query)
-            
-            # Realizar búsqueda
-            table = self.db.open_table(self.table_name)
-            
-            # Búsqueda por similitud coseno
-            results = table.search(query_embedding).metric("cosine").limit(k).to_list()
-            
-            # Convertir resultados a formato LangChain
-            documents = []
-            for result in results:
-                # Recrear documento LangChain
-                doc = LangChainDocument(
-                    page_content=result['content'],
-                    metadata={
-                        'source': result['source'],
-                        'filename': result['filename'],
-                        'chunk_index': result['chunk_index'],
-                        'score': result['_distance']  # Score de similitud
-                    }
-                )
-                documents.append((doc, result['_distance']))
-            
-            logger.info(f"Búsqueda completada: {len(documents)} resultados")
-            return documents
-            
-        except Exception as e:
-            logger.error(f"Error en búsqueda por similitud: {str(e)}")
-            raise
-    
-    @log_function_call
+        self._ensure_vs()
+        if not docs:
+            return 0
+        self._vs.add_documents(list(docs))
+        logger.info(f"{len(docs)} chunks indexados en LanceDB (tabla '{self._table_name}').")
+        return len(docs)
+
+    def similarity_search_with_scores(self, query: str, k: int = 4) -> List[SearchResult]:
+        """
+        Búsqueda semántica con puntaje de relevancia (0..1 aprox).
+        """
+        self._ensure_vs()
+        results = self._vs.similarity_search_with_relevance_scores(query, k=k)
+        # results: List[Tuple[Document, float]]
+        return [SearchResult(doc=doc, score=float(score)) for doc, score in results]
+
+    def as_retriever(self, k: int = 4):
+        """
+        Exposición como retriever estándar de LangChain (para create_retrieval_chain).
+        """
+        self._ensure_vs()
+        return self._vs.as_retriever(search_kwargs={"k": k})
+
+    # ---- utilidades para la UI (sidebar) ----
+
     def get_document_count(self) -> int:
         """
-        Obtiene el número total de documentos en la base de datos.
-        
-        Returns:
-            Número de documentos
+        Devuelve el número de filas almacenadas en la tabla LanceDB.
+        Usa count_rows() si existe; si no, intenta len().
         """
         try:
-            table = self.db.open_table(self.table_name)
-            return len(table)
-        except Exception as e:
-            logger.error(f"Error obteniendo conteo de documentos: {str(e)}")
+            tbl = self._db.open_table(self._table_name)
+            if hasattr(tbl, "count_rows"):
+                return int(tbl.count_rows())
+            try:
+                return int(len(tbl))  # fallback
+            except Exception:
+                return 0
+        except Exception:
             return 0
-    
-    @log_function_call
+
     def clear_database(self) -> None:
-        """Limpia toda la base de datos."""
-        try:
-            if self.table_name in self.db.table_names():
-                self.db.drop_table(self.table_name)
-                self._create_table_if_not_exists()
-                logger.info("Base de datos limpiada")
-        except Exception as e:
-            logger.error(f"Error limpiando base de datos: {str(e)}")
-            raise
-    
-    @log_function_call
-    def get_documents_by_source(self, source: str) -> List[LangChainDocument]:
         """
-        Obtiene todos los documentos de una fuente específica.
-        
-        Args:
-            source: Ruta de la fuente
-            
-        Returns:
-            Lista de documentos
+        Elimina la tabla de LanceDB usada por esta instancia y
+        reinicia el VectorStore para recrearlo en el próximo uso.
         """
         try:
-            table = self.db.open_table(self.table_name)
-            results = table.search().where(f"source = '{source}'").to_list()
-            
-            documents = []
-            for result in results:
-                doc = LangChainDocument(
-                    page_content=result['content'],
-                    metadata={
-                        'source': result['source'],
-                        'filename': result['filename'],
-                        'chunk_index': result['chunk_index']
-                    }
-                )
-                documents.append(doc)
-            
-            logger.info(f"Obtenidos {len(documents)} documentos de {source}")
-            return documents
-            
+            self._db.drop_table(self._table_name)
+            logger.info(f"LanceDB: tabla '{self._table_name}' eliminada.")
         except Exception as e:
-            logger.error(f"Error obteniendo documentos por fuente: {str(e)}")
-            raise
+            logger.warning(f"No se pudo eliminar la tabla '{self._table_name}': {e}")
+        # Resetea para lazy-creation en la próxima operación
+        self._vs = None
