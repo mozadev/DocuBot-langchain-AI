@@ -1,247 +1,138 @@
-"""
-Gestor de chat inteligente usando LangChain y OpenAI.
-Implementa conversaciones con memoria y contexto de documentos.
-"""
+# src/llm/chat_manager.py
 
-from typing import List, Dict, Any, Optional
+from __future__ import annotations
+
+from typing import List, Dict, Any
+
 from langchain_openai import ChatOpenAI
-from langchain.schema import Document as LangChainDocument
-from langchain.memory import ConversationBufferMemory
-from langchain.chains import ConversationalRetrievalChain
-from langchain.prompts import PromptTemplate
-from langchain.retrievers import ContextualCompressionRetriever
-from langchain.retrievers.document_compressors import LLMChainExtractor
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain.chains import create_history_aware_retriever, create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
 
-from src.core.logger import logger, log_function_call
 from config.settings import settings
+from src.core.logger import logger, log_function_call
+from src.data.vector_store import VectorStoreManager, SearchResult  # ajusta si tu vector_store está en otra ruta
+
+
+# --- Store de historiales por sesión (usa ChatMessageHistory, no listas) ---
+class SessionHistoryStore:
+    def __init__(self) -> None:
+        self._store: Dict[str, InMemoryChatMessageHistory] = {}
+
+    def get(self, session_id: str) -> InMemoryChatMessageHistory:
+        hist = self._store.get(session_id)
+        if hist is None:
+            hist = InMemoryChatMessageHistory()
+            self._store[session_id] = hist
+        return hist
+
+    def clear(self, session_id: str) -> None:
+        self._store.pop(session_id, None)
+
 
 class ChatManager:
     """
-    Gestor de chat inteligente que integra LangChain con OpenAI.
-    Maneja conversaciones con memoria y contexto de documentos.
+    Chat RAG con:
+      - LLM OpenAI
+      - Retriever consciente del historial
+      - Memoria multi-turn con RunnableWithMessageHistory
     """
-    
-    def __init__(self, vector_store):
-        """
-        Inicializa el gestor de chat.
-        
-        Args:
-            vector_store: Instancia de VectorStore para búsqueda de documentos
-        """
+
+    def __init__(self, vector_store: VectorStoreManager, session_id: str = "default") -> None:
         self.vector_store = vector_store
-        
-        # Inicializar modelo de lenguaje
+        self.session_id = session_id
+
         self.llm = ChatOpenAI(
-            model_name=settings.openai_model,
+            model=settings.openai_model,
             temperature=settings.openai_temperature,
-            openai_api_key=settings.openai_api_key
+            api_key=settings.openai_api_key,
         )
-        
-        # Configurar memoria de conversación
-        self.memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True,
-            output_key="answer"
+
+        # Retriever (¡siempre .as_retriever()!)
+        self.retriever = self.vector_store.as_retriever(k=4)
+
+        # Prompt para reescribir la pregunta con historial
+        self.contextualize_q_prompt = ChatPromptTemplate.from_messages([
+            ("system", "Reescribe la última consulta como una pregunta independiente. "
+                       "Usa el historial sólo si ayuda. No inventes datos."),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ])
+
+        # Prompt de QA con contexto documental
+        self.qa_prompt = ChatPromptTemplate.from_messages([
+            ("system",
+             "Responde exclusivamente usando el contexto provisto.\n\n"
+             "Contexto:\n{context}\n\n"
+             "Si no hay contexto relevante, dilo explícitamente."),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ])
+
+        # Cadena RAG con historial
+        self.history_aware_retriever = create_history_aware_retriever(
+            self.llm, self.retriever, self.contextualize_q_prompt
         )
-        
-        # Configurar retriever con compresión contextual
-        self._setup_retriever()
-        
-        # Configurar cadena de conversación
-        self._setup_conversation_chain()
-        
-        logger.info("ChatManager inicializado")
-    
-    @log_function_call
-    def _setup_retriever(self):
-        """Configura el retriever con compresión contextual."""
-        try:
-            # Retriever base
-            base_retriever = self.vector_store.similarity_search
-            
-            # Compresor contextual para mejorar relevancia
-            compressor_prompt = PromptTemplate(
-                input_variables=["question", "context"],
-                template="""Dado el siguiente contexto y pregunta, extrae solo la información relevante para responder la pregunta.
+        self.doc_chain = create_stuff_documents_chain(self.llm, self.qa_prompt)
+        self.rag_chain = create_retrieval_chain(self.history_aware_retriever, self.doc_chain)
 
-Contexto: {context}
-Pregunta: {question}
+        # Memoria tipo ChatMessageHistory
+        self._history_store = SessionHistoryStore()
 
-Información relevante:"""
-            )
-            
-            compressor = LLMChainExtractor.from_llm(self.llm, compressor_prompt)
-            
-            # Retriever con compresión
-            self.retriever = ContextualCompressionRetriever(
-                base_compressor=compressor,
-                base_retriever=base_retriever
-            )
-            
-            logger.info("Retriever configurado con compresión contextual")
-            
-        except Exception as e:
-            logger.error(f"Error configurando retriever: {str(e)}")
-            raise
-    
-    @log_function_call
-    def _setup_conversation_chain(self):
-        """Configura la cadena de conversación."""
-        try:
-            # Prompt personalizado para el chat
-            template = """Eres un asistente de IA experto en analizar documentos y responder preguntas basándote en el contenido proporcionado.
+        # Wrapper que gestiona el historial automáticamente
+        self.chat = RunnableWithMessageHistory(
+            self.rag_chain,
+            lambda session_id: self._history_store.get(session_id),
+            input_messages_key="input",           # el input del usuario
+            history_messages_key="chat_history",  # coincide con MessagesPlaceholder
+            output_messages_key="answer",         # añade la respuesta al historial
+        )
 
-Contexto de documentos:
-{context}
+        logger.info("ChatManager inicializado (LCEL).")
 
-Historial de conversación:
-{chat_history}
-
-Pregunta del usuario: {question}
-
-Instrucciones:
-1. Responde basándote únicamente en el contexto proporcionado
-2. Si no encuentras información relevante en el contexto, indícalo claramente
-3. Proporciona respuestas claras y concisas
-4. Cita las fuentes cuando sea apropiado
-5. Mantén un tono profesional pero amigable
-
-Respuesta:"""
-            
-            prompt = PromptTemplate(
-                input_variables=["context", "chat_history", "question"],
-                template=template
-            )
-            
-            # Crear cadena de conversación
-            self.conversation_chain = ConversationalRetrievalChain.from_llm(
-                llm=self.llm,
-                retriever=self.retriever,
-                memory=self.memory,
-                combine_docs_chain_kwargs={"prompt": prompt},
-                return_source_documents=True,
-                verbose=settings.debug
-            )
-            
-            logger.info("Cadena de conversación configurada")
-            
-        except Exception as e:
-            logger.error(f"Error configurando cadena de conversación: {str(e)}")
-            raise
-    
     @log_function_call
     def ask_question(self, question: str) -> Dict[str, Any]:
-        """
-        Realiza una pregunta al sistema de chat.
-        
-        Args:
-            question: Pregunta del usuario
-            
-        Returns:
-            Diccionario con respuesta y metadatos
-        """
-        try:
-            if not question.strip():
-                return {
-                    "answer": "Por favor, proporciona una pregunta válida.",
-                    "sources": [],
-                    "confidence": 0.0
-                }
-            
-            # Realizar consulta
-            result = self.conversation_chain({"question": question})
-            
-            # Extraer fuentes
-            sources = []
-            if "source_documents" in result:
-                for doc in result["source_documents"]:
-                    sources.append({
-                        "filename": doc.metadata.get("filename", "Desconocido"),
-                        "content": doc.page_content[:200] + "...",
-                        "score": doc.metadata.get("score", 0.0)
-                    })
-            
-            # Calcular confianza basada en scores de similitud
-            confidence = 0.0
-            if sources:
-                scores = [s["score"] for s in sources if s["score"] is not None]
-                if scores:
-                    confidence = sum(scores) / len(scores)
-            
-            response = {
-                "answer": result["answer"],
-                "sources": sources,
-                "confidence": confidence,
-                "question": question
-            }
-            
-            logger.info(f"Pregunta respondida: {question[:50]}...")
-            return response
-            
-        except Exception as e:
-            logger.error(f"Error procesando pregunta: {str(e)}")
-            return {
-                "answer": f"Lo siento, ocurrió un error al procesar tu pregunta: {str(e)}",
-                "sources": [],
-                "confidence": 0.0,
-                "question": question
-            }
-    
+        if not question or not question.strip():
+            return {"answer": "Por favor, proporciona una pregunta válida.", "sources": [], "confidence": 0.0}
+
+        # Ejecuta la cadena con el historial de la sesión
+        result = self.chat.invoke(
+            {"input": question},
+            config={"configurable": {"session_id": self.session_id}},
+        )
+        answer_text = result.get("answer", "")
+
+        # Fuentes + “confianza” (opcional)
+        scored = self.vector_store.similarity_search_with_scores(question, k=4)
+        sources = [{
+            "filename": sr.doc.metadata.get("filename", "Desconocido"),
+            "content": (sr.doc.page_content[:200] + "...") if sr.doc.page_content else "",
+            "score": sr.score,
+        } for sr in scored]
+        confidence = float(sum(s["score"] for s in sources) / len(sources)) if sources else 0.0
+
+        logger.info(f"Pregunta respondida: {question[:80]}...")
+        return {"answer": answer_text, "sources": sources, "confidence": confidence, "question": question}
+
     @log_function_call
     def get_chat_history(self) -> List[Dict[str, str]]:
-        """
-        Obtiene el historial de conversación.
-        
-        Returns:
-            Lista de mensajes del historial
-        """
-        try:
-            history = []
-            for message in self.memory.chat_memory.messages:
-                history.append({
-                    "role": message.type,
-                    "content": message.content
-                })
-            return history
-        except Exception as e:
-            logger.error(f"Error obteniendo historial: {str(e)}")
-            return []
-    
+        hist = self._history_store.get(self.session_id)
+        return [{"role": m.type, "content": m.content} for m in hist.messages]
+
     @log_function_call
     def clear_memory(self) -> None:
-        """Limpia la memoria de conversación."""
-        try:
-            self.memory.clear()
-            logger.info("Memoria de conversación limpiada")
-        except Exception as e:
-            logger.error(f"Error limpiando memoria: {str(e)}")
-            raise
-    
+        self._history_store.clear(self.session_id)
+        logger.info("Memoria de conversación limpiada")
+
     @log_function_call
     def get_conversation_summary(self) -> str:
-        """
-        Genera un resumen de la conversación actual.
-        
-        Returns:
-            Resumen de la conversación
-        """
-        try:
-            history = self.get_chat_history()
-            if not history:
-                return "No hay historial de conversación."
-            
-            # Crear resumen usando el LLM
-            summary_prompt = f"""
-            Genera un resumen conciso de la siguiente conversación:
-            
-            {history}
-            
-            Resumen:
-            """
-            
-            response = self.llm.invoke(summary_prompt)
-            return response.content
-            
-        except Exception as e:
-            logger.error(f"Error generando resumen: {str(e)}")
-            return "Error generando resumen de la conversación."
+        hist = self._history_store.get(self.session_id)
+        if not hist.messages:
+            return "No hay historial de conversación."
+        messages = [
+            ("system", "Resume la conversación de forma breve y fiel al contenido."),
+            ("human", str([{"role": m.type, "content": m.content} for m in hist.messages])),
+        ]
+        return self.llm.invoke(messages).content
