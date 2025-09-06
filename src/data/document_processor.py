@@ -9,7 +9,11 @@ from pathlib import Path
 import PyPDF2
 from docx import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document as LangChainDocument
+
+# cambia esta línea:
+# from langchain.schema import Document as LangChainDocument
+from langchain_core.documents import Document as LangChainDocument
+
 
 from src.core.logger import logger, log_function_call
 from config.settings import settings
