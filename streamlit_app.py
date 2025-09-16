@@ -269,7 +269,6 @@ def main():
                         with st.spinner("🤔 Pensando..."):
                             response = chat_manager.ask_question(question)
                         st.session_state.chat_history.append(response)
-                        st.session_state["question_input"] = ""  # limpia el input
                         st.rerun()
 
             with col2:
