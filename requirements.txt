@@ -1,42 +1,13 @@
-# --- Core LangChain (API moderna, Pydantic v2) ---
-langchain==0.3.*            # núcleo moderno
-langchain-community==0.3.*  # integraciones
-langchain-openai==0.3.*     # OpenAI para LangChain
-pydantic>=2.6,<3
-
-# --- OpenAI sdk ---
-openai>=1.40,<2
-
-# --- Vector DB ---
-lancedb>=0.7
-tantivy>=0.22                # (opcional pero recomendado por LanceDB)  :contentReference[oaicite:4]{index=4}
-
-# --- Web UI ---
-streamlit>=1.32
-
-# --- Data utils ---
-pandas>=2.1
-numpy>=1.26
-tiktoken>=0.7
-
-# --- Docs ---
-python-docx>=1.1.0
-pypdf>=4
-PyPDF2>=3
-
-# --- Utils ---
-python-dotenv>=1.0.0
-requests>=2.31
-
-# --- Dev ---
-black>=24.3.0
-flake8>=7.0.0
-mypy>=1.10.0
-pytest>=8
-pytest-asyncio>=0.23
-
-
-
-
-# --- Parche temporal si sigues con Python 3.9 + LibreSSL (quita esto al migrar a 3.11+) ---
-# urllib3<2
+pillow==11.3.0
+protobuf==6.32.1
+pyarrow==21.0.0
+pytz==2025.2
+rpds-py==0.27.1
+six==1.17.0
+smmap==5.0.2
+tenacity==9.1.2
+toml==0.10.2
+tornado==6.5.2
+typing_extensions==4.15.0
+tzdata==2025.2
+urllib3==2.5.0
