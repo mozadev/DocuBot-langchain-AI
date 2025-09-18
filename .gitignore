@@ -128,26 +128,40 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# Project specific
-data/vector_db/
+# DocuBot AI specific
+# Logs
 logs/
-*.db
-*.sqlite
-*.sqlite3
+*.log
 
-# IDE
+# Data directories (keep structure but not content)
+data/vector_db/*
+!data/vector_db/.gitkeep
+data/sample_documents/*
+!data/sample_documents/.gitkeep
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# OS
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
-# Temporary files
-*.tmp
-*.temp
-temp/
-tmp/
+# Streamlit
+.streamlit/
+
+# LanceDB
+*.lance/
